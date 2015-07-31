@@ -97,6 +97,12 @@ typedef void(^MZFormSheetPresentationControllerTransitionHandler)();
 @property (nonatomic, assign) BOOL shouldCenterVertically MZ_APPEARANCE_SELECTOR;
 
 /**
+ The orizontal offset of content view from the center.
+ By default, this is 0
+ */
+@property (nonatomic, assign) CGFloat contentViewOrizontalOffset MZ_APPEARANCE_SELECTOR;
+
+/**
  Returns whether the background view be touch transparent.
  If transparent is set to YES, background view will not recive touch and didTapOnBackgroundViewCompletionHandler will not be called.
  Also will not be possible to dismiss form sheet on background tap.
