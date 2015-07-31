@@ -410,6 +410,13 @@ static NSMutableDictionary *_instanceOfTransitionClasses = nil;
         frame.origin.y = self.topInset;
         self.contentViewController.view.frame = frame;
     }
+    
+    if (self.contentViewOrizontalOffset != 0)
+    {
+        CGRect frame = self.contentViewController.view.frame;
+        frame.origin.x = frame.origin.x + self.contentViewOrizontalOffset;
+        self.contentViewController.view.frame = frame;
+    }
 }
 
 #pragma mark - UIKeyboard Notifications
