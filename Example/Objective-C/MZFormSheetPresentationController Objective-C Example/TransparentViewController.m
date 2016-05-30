@@ -1,13 +1,13 @@
 //
 //  TransparentViewController.m
-//  MZFormSheetPresentationController Objective-C Example
+//  MZFormSheetPresentationViewController Objective-C Example
 //
 //  Created by Michal Zaborowski on 22.06.2015.
 //  Copyright (c) 2015 Michal Zaborowski. All rights reserved.
 //
 
 #import "TransparentViewController.h"
-#import "MZFormSheetPresentationController.h"
+#import "MZFormSheetPresentationViewController.h"
 
 @interface TransparentViewController ()
 
@@ -25,12 +25,12 @@
     // Dispose of any resources that can be recreated.
 }
 - (IBAction)turnOnTransparencyButtonTapped:(id)sender {
-    self.mz_formSheetPresentingPresentationController.backgroundColor = [UIColor clearColor];
-    self.mz_formSheetPresentingPresentationController.transparentTouchEnabled = YES;
+    self.mz_formSheetPresentingPresentationController.presentationController.backgroundColor = [UIColor clearColor];
+    self.mz_formSheetPresentingPresentationController.presentationController.transparentTouchEnabled = YES;
 }
 - (IBAction)turnOffTransparencyButtonTapped:(id)sender {
-    self.mz_formSheetPresentingPresentationController.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.3];
-    self.mz_formSheetPresentingPresentationController.transparentTouchEnabled = NO;
+    self.mz_formSheetPresentingPresentationController.presentationController.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.3];
+    self.mz_formSheetPresentingPresentationController.presentationController.transparentTouchEnabled = NO;
     
 }
 - (IBAction)dismissButtonTapped:(id)sender {
@@ -46,5 +46,9 @@
     // Pass the selected object to the new view controller.
 }
 */
+
+- (UIStatusBarStyle)preferredStatusBarStyle {
+    return UIStatusBarStyleLightContent;
+}
 
 @end

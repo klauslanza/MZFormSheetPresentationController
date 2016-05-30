@@ -1,6 +1,6 @@
 //
-//  MZFormSheetPresentationController.m
-//  MZFormSheetPresentationController
+//  MZFormSheetPresentationViewController.m
+//  MZFormSheetPresentationViewController
 //
 //  Created by Michał Zaborowski on 24.02.2015.
 //  Copyright (c) 2015 Michał Zaborowski. All rights reserved.
@@ -24,61 +24,36 @@
 //  THE SOFTWARE.
 
 #import "MZFormSheetPresentationController.h"
-#import "UIViewController+TargetViewController.h"
-#import "MZFormSheetPresentationControllerAnimator.h"
-#import <JGMethodSwizzler/JGMethodSwizzler.h>
+#import <objc/runtime.h>
 #import "MZBlurEffectAdapter.h"
+#import "MZMethodSwizzler.h"
+#import "MZFormSheetPresentationContentSizing.h"
+#import "MZFormSheetPresentationViewController.h"
 
-CGFloat const MZFormSheetPresentationControllerDefaultAnimationDuration = 0.35;
-
-static CGFloat const MZFormSheetPresentationControllerDefaultAboveKeyboardMargin = 20;
-
-static NSMutableDictionary *_instanceOfTransitionClasses = nil;
+CGFloat const MZFormSheetPresentationControllerDefaultAboveKeyboardMargin = 20;
 
 @interface MZFormSheetPresentationController () <UIGestureRecognizerDelegate>
-@property (nonatomic, strong) UIViewController *contentViewController;
+@property (nonatomic, strong) UIView *dimmingView;
+@property (nonatomic, strong) UIVisualEffectView *blurBackgroundView;
+@property (nonatomic, strong) MZBlurEffectAdapter *blurEffectAdapter;
 @property (nonatomic, strong) UITapGestureRecognizer *backgroundTapGestureRecognizer;
+
 @property (nonatomic, assign, getter=isKeyboardVisible) BOOL keyboardVisible;
 @property (nonatomic, strong) NSValue *screenFrameWhenKeyboardVisible;
-@property (nonatomic, strong) UIVisualEffectView *blurBackgroundView;
-@property (nonatomic, strong) MZFormSheetPresentationControllerAnimator *animator;
-@property (nonatomic, strong) MZBlurEffectAdapter *blurEffectAdapter;
 @end
 
 @implementation MZFormSheetPresentationController
 
-#pragma mark - Dealloc
-
 - (void)dealloc {
-    [self turnOffTransparentTouch];
-    
-    [self.view removeGestureRecognizer:self.backgroundTapGestureRecognizer];
-    self.backgroundTapGestureRecognizer = nil;
-
-    [self.contentViewController willMoveToParentViewController:nil];
-    [self.contentViewController.view removeFromSuperview];
-    [self.contentViewController removeFromParentViewController];
-    self.contentViewController = nil;
-
+    for (UIGestureRecognizer *gestureRecognizer in [self.containerView.gestureRecognizers copy]) {
+        [self.containerView removeGestureRecognizer:gestureRecognizer];
+    }
+#if !TARGET_OS_TV
     [self removeKeyboardNotifications];
-}
-
-#pragma mark - Class methods
-
-+ (void)registerTransitionClass:(Class)transitionClass forTransitionStyle:(MZFormSheetPresentationTransitionStyle)transitionStyle {
-    [[MZFormSheetPresentationController sharedTransitionClasses] setObject:transitionClass forKey:@(transitionStyle)];
-}
-
-+ (Class)classForTransitionStyle:(MZFormSheetPresentationTransitionStyle)transitionStyle {
-    return [MZFormSheetPresentationController sharedTransitionClasses][@(transitionStyle)];
-}
-
-+ (NSMutableDictionary *)sharedTransitionClasses {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        _instanceOfTransitionClasses = [[NSMutableDictionary alloc] init];
-    });
-    return _instanceOfTransitionClasses;
+#endif
+    
+    [self.dimmingView removeGestureRecognizer:self.backgroundTapGestureRecognizer];
+    self.backgroundTapGestureRecognizer = nil;
 }
 
 #pragma mark - Appearance
@@ -89,15 +64,23 @@ static NSMutableDictionary *_instanceOfTransitionClasses = nil;
         [appearance setContentViewSize:CGSizeMake(284.0, 284.0)];
         [appearance setPortraitTopInset:66.0];
         [appearance setLandscapeTopInset:6.0];
-        [appearance setContentViewCornerRadius:5.0];
+        [appearance setShouldCenterHorizontally:YES];
         [appearance setBackgroundColor:[UIColor colorWithWhite:0 alpha:0.5]];
         [appearance setBlurEffectStyle:UIBlurEffectStyleLight];
-        [appearance setMovementActionWhenKeyboardAppears:MZFormSheetActionWhenKeyboardAppearsDoNothing];
     }
 }
 
 + (id)appearance {
     return [MZAppearance appearanceForClass:[self class]];
+}
+
+#pragma mark - Getters
+
+- (UIView *)dimmingView {
+    if (!_dimmingView) {
+        _dimmingView = [[UIView alloc] initWithFrame:self.containerView.frame];
+    }
+    return _dimmingView;
 }
 
 #pragma mark - Setters
@@ -113,14 +96,40 @@ static NSMutableDictionary *_instanceOfTransitionClasses = nil;
     }
 }
 
-- (void)setShouldCenterVertically:(BOOL)shouldCenterVertically {
-    _shouldCenterVertically = shouldCenterVertically;
-    [self setupFormSheetViewControllerFrame];
+- (void)setContentViewSize:(CGSize)contentViewSize {
+    if (!CGSizeEqualToSize(_contentViewSize, contentViewSize)) {
+        _contentViewSize = contentViewSize;
+        [self setupFormSheetViewControllerFrame];
+    }
 }
+
+- (BOOL)isPresentedViewControllerUsingModifiedContentFrame {
+    if ([self.presentedViewController conformsToProtocol:@protocol(MZFormSheetPresentationContentSizing)]) {
+        if ([self.presentedViewController respondsToSelector:@selector(shouldUseContentViewFrameForPresentationController:)]) {
+            id <MZFormSheetPresentationContentSizing> presentedViewController = (id <MZFormSheetPresentationContentSizing>)self.presentedViewController;
+            return [presentedViewController shouldUseContentViewFrameForPresentationController:self];
+        }
+    }
+    return NO;
+}
+
+- (CGRect)modifiedContentViewFrameForFrame:(CGRect)frame {
+    id <MZFormSheetPresentationContentSizing> presentedViewController = (id <MZFormSheetPresentationContentSizing>)self.presentedViewController;
+    return [presentedViewController contentViewFrameForPresentationController:self currentFrame:frame];
+}
+
+- (CGSize)internalContentViewSize {
+    if ([self isPresentedViewControllerUsingModifiedContentFrame]) {
+        CGRect modifiedFrame = [self modifiedContentViewFrameForFrame:(CGRect){ .origin = self.presentedView.frame.origin, .size = self.contentViewSize }];
+        return modifiedFrame.size;
+    }
+    return self.contentViewSize;
+}
+
 
 - (void)setBackgroundColor:(UIColor * __nullable)backgroundColor {
     _backgroundColor = backgroundColor;
-    self.view.backgroundColor = _backgroundColor;
+    self.dimmingView.backgroundColor = _backgroundColor;
 }
 
 - (void)setShouldApplyBackgroundBlurEffect:(BOOL)shouldApplyBackgroundBlurEffect {
@@ -143,193 +152,99 @@ static NSMutableDictionary *_instanceOfTransitionClasses = nil;
     }
 }
 
-- (void)setContentViewSize:(CGSize)contentViewSize {
-    if (!CGSizeEqualToSize(_contentViewSize, contentViewSize)) {
-        _contentViewSize = CGSizeMake(nearbyintf(contentViewSize.width), nearbyintf(contentViewSize.height));
-
-        CGPoint center = self.contentViewController.view.center;
-        self.contentViewController.view.frame = CGRectMake(center.x - _contentViewController.view.frame.size.width / 2,
-                                                           center.y - _contentViewController.view.frame.size.height / 2,
-                                                           _contentViewSize.width,
-                                                           _contentViewSize.height);
-        self.contentViewController.view.center = center;
-        [self setupFormSheetViewControllerFrame];
-    }
+- (void)setDidTapOnBackgroundViewCompletionHandler:(MZFormSheetPresentationControllerTapHandler)didTapOnBackgroundViewCompletionHandler {
+    _didTapOnBackgroundViewCompletionHandler = didTapOnBackgroundViewCompletionHandler;
+    [self addBackgroundTapGestureRecognizer];
 }
 
-- (void)setContentViewCornerRadius:(CGFloat)contentViewCornerRadius {
-    _contentViewCornerRadius = contentViewCornerRadius;
-    if (_contentViewCornerRadius > 0) {
-        self.contentViewController.view.layer.masksToBounds = YES;
+#pragma mark - Init
+
+- (instancetype)initWithPresentedViewController:(UIViewController *)presentedViewController presentingViewController:(UIViewController *)presentingViewController {
+    if (self = [super initWithPresentedViewController:presentedViewController presentingViewController:presentingViewController]) {
+        
+        [[[self class] appearance] applyInvocationTo:self];
+        
+#if !TARGET_OS_TV
+        [self addKeyboardNotifications];
+#endif
+        
     }
-    self.contentViewController.view.layer.cornerRadius = _contentViewCornerRadius;
+    return self;
 }
 
-#pragma mark - Getters
+#pragma mark - Public
+
+- (void)layoutPresentingViewController {
+    [self setupFormSheetViewControllerFrame];
+}
+
+#pragma mark - Private
+
+- (void)setupBackgroundBlurView {
+    [self.blurBackgroundView removeFromSuperview];
+    self.blurBackgroundView = nil;
+    
+    if (self.shouldApplyBackgroundBlurEffect) {
+        
+        self.blurEffectAdapter = [MZBlurEffectAdapter effectWithStyle:self.blurEffectStyle];
+        UIVisualEffect *visualEffect = self.blurEffectAdapter.blurEffect;
+        self.blurBackgroundView = [[UIVisualEffectView alloc] initWithEffect:visualEffect];
+        
+        self.blurBackgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        
+        self.blurBackgroundView.frame = self.dimmingView.bounds;
+        self.blurBackgroundView.translatesAutoresizingMaskIntoConstraints = YES;
+        self.blurBackgroundView.userInteractionEnabled = NO;
+        
+        self.dimmingView.backgroundColor = [UIColor clearColor];
+        [self.dimmingView addSubview:self.blurBackgroundView];
+    } else {
+        self.dimmingView.backgroundColor = self.backgroundColor;
+    }
+    
+}
 
 - (CGFloat)yCoordinateBelowStatusBar {
+#if TARGET_OS_TV || MZ_APP_EXTENSIONS
+    return 0;
+#else
     return [UIApplication sharedApplication].statusBarFrame.size.height;
+#endif
 }
 
 - (CGFloat)topInset {
+#if TARGET_OS_TV || MZ_APP_EXTENSIONS
+    return self.landscapeTopInset;
+#else
     if (UIInterfaceOrientationIsPortrait([UIApplication sharedApplication].statusBarOrientation)) {
         return self.portraitTopInset + [self yCoordinateBelowStatusBar];
     } else {
         return self.landscapeTopInset + [self yCoordinateBelowStatusBar];
     }
+#endif
 }
 
-#pragma mark - View Life cycle
-
-- (instancetype)initWithContentViewController:(UIViewController *)viewController {
-    if (self = [self init]) {
-
-        NSParameterAssert(viewController);
-        self.contentViewController = viewController;
-        self.modalPresentationStyle = UIModalPresentationOverFullScreen;
-        self.transitioningDelegate = self;
-
-        id appearance = [[self class] appearance];
-        [appearance applyInvocationTo:self];
-    }
-    return self;
-}
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-
-    [self addKeyboardNotifications];
-
-    [self addBackgroundTapGestureRecognizer];
-
-    [self addChildViewController:self.contentViewController];
-    [self.view addSubview:self.contentViewController.view];
-    [self.contentViewController didMoveToParentViewController:self];
-    
-    if (self.shouldUseMotionEffect) {
-        [self setupMotionEffectToContentViewController];
-    }
-
-    [self setupFormSheetViewController];
-    [self setupBackgroundBlurView];
-    [self setupFormSheetViewControllerFrame];
-}
-
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
-    [self handleEntryTransitionAnimated:animated];
-}
-
-- (void)viewDidAppear:(BOOL)animated {
-    [super viewDidAppear:animated];
-    
-    if (self.transparentTouchEnabled) {
-        [self turnOffTransparentTouch];
-        [self turnOnTransparentTouch];
-    }
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-    [super viewWillDisappear:animated];
-    [self handleOutTransitionAnimated:animated];
-}
-
-#pragma mark - Swizzle
+#pragma mark - Transparent Touch
 
 - (void)turnOnTransparentTouch {
     __weak typeof(self) weakSelf = self;
-    if (self.animator.transitionContextContainerView) {
-        [self.animator.transitionContextContainerView swizzleMethod:@selector(pointInside:withEvent:) withReplacement:JGMethodReplacementProviderBlock {
-            return JGMethodReplacement(BOOL, UIView *, CGPoint point, UIEvent *event) {
-                if (!CGRectContainsPoint(weakSelf.contentViewController.view.frame, point)){
-                    return NO;
-                }
-                return YES;
-            };
-        }];
-    }
+    [self.containerView swizzleMethod:@selector(pointInside:withEvent:) withReplacement:MZMethodReplacementProviderBlock {
+        return MZMethodReplacement(BOOL, UIView *, CGPoint point, UIEvent *event) {
+            if (!CGRectContainsPoint(weakSelf.presentedView.frame, point)){
+                return NO;
+            }
+            return YES;
+        };
+    }];
 }
 
 - (void)turnOffTransparentTouch {
-    if (self.animator.transitionContextContainerView) {
-        [self.animator.transitionContextContainerView deswizzleMethod:@selector(pointInside:withEvent:)];
-    }
-}
-
-#pragma mark - Transitions
-
-- (void)handleEntryTransitionAnimated:(BOOL)animated {
-
-    if (self.transitionCoordinator) {
-        MZFormSheetPresentationControllerTransitionHandler transitionCompletionHandler = ^() {
-            if (self.didPresentContentViewControllerHandler) {
-                self.didPresentContentViewControllerHandler(self.contentViewController);
-            }
-        };
-
-        if (self.willPresentContentViewControllerHandler) {
-            self.willPresentContentViewControllerHandler(self.contentViewController);
-        }
-
-        if (animated) {
-            [self transitionEntryWithCompletionBlock:transitionCompletionHandler];
-        } else {
-            transitionCompletionHandler();
-        }
-    }
-}
-
-- (void)handleOutTransitionAnimated:(BOOL)animated {
-    [self.transitionCoordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
-
-        MZFormSheetPresentationControllerTransitionHandler transitionCompletionHandler = ^(){
-            if (self.didDismissContentViewControllerHandler) {
-                self.didDismissContentViewControllerHandler(self.contentViewController);
-            }
-        };
-
-        if (self.willDismissContentViewControllerHandler) {
-            self.willDismissContentViewControllerHandler(self.contentViewController);
-        }
-
-        if (animated) {
-            [self transitionOutWithCompletionBlock:transitionCompletionHandler];
-        } else {
-            transitionCompletionHandler();
-        }
-
-    } completion:nil];
-}
-
-- (void)transitionEntryWithCompletionBlock:(MZFormSheetPresentationControllerTransitionHandler)completionBlock {
-    Class transitionClass = [MZFormSheetPresentationController sharedTransitionClasses][@(self.contentViewControllerTransitionStyle)];
-
-    if (transitionClass) {
-        id<MZFormSheetPresentationControllerTransitionProtocol> transition = [[transitionClass alloc] init];
-
-        [transition entryFormSheetControllerTransition:self
-                                     completionHandler:completionBlock];
-    } else {
-        completionBlock();
-    }
-}
-
-- (void)transitionOutWithCompletionBlock:(MZFormSheetPresentationControllerTransitionHandler)completionBlock {
-    Class transitionClass = [MZFormSheetPresentationController sharedTransitionClasses][@(self.contentViewControllerTransitionStyle)];
-
-    if (transitionClass) {
-        id<MZFormSheetPresentationControllerTransitionProtocol> transition = [[transitionClass alloc] init];
-
-        [transition exitFormSheetControllerTransition:self
-                                    completionHandler:completionBlock];
-    } else {
-        completionBlock();
-    }
+    [self.containerView deswizzleMethod:@selector(pointInside:withEvent:)];
 }
 
 #pragma mark - Motion Effect
 
-- (void)setupMotionEffectToContentViewController {
+- (void)setupMotionEffectToPresentedView {
     UIMotionEffectGroup *effects = [[UIMotionEffectGroup alloc] init];
     
     UIInterpolatingMotionEffect *horizontal = [[UIInterpolatingMotionEffect alloc] initWithKeyPath:@"center.x" type:UIInterpolatingMotionEffectTypeTiltAlongHorizontalAxis];
@@ -341,148 +256,120 @@ static NSMutableDictionary *_instanceOfTransitionClasses = nil;
     vertical.maximumRelativeValue = @18;
     
     effects.motionEffects = @[horizontal, vertical];
-    [self.contentViewController.view addMotionEffect:effects];
+    [self.presentedView addMotionEffect:effects];
 }
 
-#pragma mark - Blur
+#pragma mark - SuperClass Override
 
-- (void)setupBackgroundBlurView {
-    [self.blurBackgroundView removeFromSuperview];
-    self.blurBackgroundView = nil;
-
-    if (self.shouldApplyBackgroundBlurEffect) {
-
-        self.blurEffectAdapter = [MZBlurEffectAdapter effectWithStyle:self.blurEffectStyle];
-        UIVisualEffect *visualEffect = self.blurEffectAdapter.blurEffect;
-        self.blurBackgroundView = [[UIVisualEffectView alloc] initWithEffect:visualEffect];
-
-        self.blurBackgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleHeight | UIViewAutoresizingFlexibleBottomMargin;
-
-        self.blurBackgroundView.frame = self.view.bounds;
-        self.blurBackgroundView.translatesAutoresizingMaskIntoConstraints = YES;
-        self.blurBackgroundView.userInteractionEnabled = NO;
-
-        [self.view insertSubview:self.blurBackgroundView atIndex:0];
+- (void)presentationTransitionWillBegin {
+    
+    if (self.presentationTransitionWillBeginCompletionHandler) {
+        self.presentationTransitionWillBeginCompletionHandler(self.presentedViewController);
     }
-    self.view.backgroundColor = self.backgroundColor;
+    
+    if (self.shouldUseMotionEffect) {
+        [self setupMotionEffectToPresentedView];
+    }
+    
+    if (self.shouldDismissOnBackgroundViewTap) {
+        [self addBackgroundTapGestureRecognizer];
+    }
+    
+    if (self.transparentTouchEnabled) {
+        [self turnOffTransparentTouch];
+        [self turnOnTransparentTouch];
+    }
+    
+    [self setupBackgroundBlurView];
+    
+    self.dimmingView.frame = self.containerView.bounds;
+    self.dimmingView.alpha = 0.0;
+    [self.containerView addSubview:self.dimmingView];
+    
+    // this is some kind of bug :<, if we will delete this line, then inside custom animator
+    // we need to set finalFrameForViewController to targetView
+    [self presentedView].frame = [self frameOfPresentedViewInContainerView];
+    [self setupFormSheetViewControllerFrame];
+    
+    [self.presentedViewController.transitionCoordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext>  _Nonnull context) {
+        [UIView animateWithDuration:[context transitionDuration] animations:^{
+            self.dimmingView.alpha = 1.0;
+        }];
+    } completion:nil];
+    
+    [super presentationTransitionWillBegin];
 }
 
-#pragma mark - Setup
-
-- (void)setupFormSheetViewController {
-    self.contentViewController.view.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
-    self.contentViewController.view.layer.masksToBounds = YES;
-    self.contentViewController.view.layer.cornerRadius = self.contentViewCornerRadius;
-    self.contentViewController.view.frame = CGRectMake(0, 0, self.contentViewSize.width, self.contentViewSize.height);
-    self.contentViewController.view.center = CGPointMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds));
-}
-
-- (void)setupFormSheetViewControllerFrame {
-    if (self.keyboardVisible && self.movementActionWhenKeyboardAppears != MZFormSheetActionWhenKeyboardAppearsDoNothing) {
-        CGRect formSheetRect = self.contentViewController.view.frame;
-        CGRect screenRect = [self.screenFrameWhenKeyboardVisible CGRectValue];
-
-        if (screenRect.size.height > CGRectGetHeight(formSheetRect)) {
-            switch (self.movementActionWhenKeyboardAppears) {
-            case MZFormSheetActionWhenKeyboardAppearsCenterVertically:
-                formSheetRect.origin.y = ([self yCoordinateBelowStatusBar] + screenRect.size.height - formSheetRect.size.height) / 2 - screenRect.origin.y;
-                break;
-            case MZFormSheetActionWhenKeyboardAppearsMoveToTop:
-                formSheetRect.origin.y = [self yCoordinateBelowStatusBar];
-                break;
-            case MZFormSheetActionWhenKeyboardAppearsMoveToTopInset:
-                formSheetRect.origin.y = [self topInset];
-                break;
-            case MZFormSheetActionWhenKeyboardAppearsAboveKeyboard:
-                formSheetRect.origin.y = formSheetRect.origin.y + (screenRect.size.height - CGRectGetMaxY(formSheetRect)) - MZFormSheetPresentationControllerDefaultAboveKeyboardMargin;
-            default:
-                break;
-            }
-        } else {
-            formSheetRect.origin.y = [self yCoordinateBelowStatusBar];
-        }
-
-        self.contentViewController.view.frame = formSheetRect;
-    } else if (self.shouldCenterVertically) {
-        self.contentViewController.view.center = CGPointMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds));
-    } else {
-        CGRect frame = self.contentViewController.view.frame;
-        frame.origin.y = self.topInset;
-        self.contentViewController.view.frame = frame;
+- (void)presentationTransitionDidEnd:(BOOL)completed {
+    [super presentationTransitionDidEnd:completed];
+    
+    if (!completed) {
+        [self.dimmingView removeFromSuperview];
+    }
+    if (self.presentationTransitionDidEndCompletionHandler) {
+        self.presentationTransitionDidEndCompletionHandler(self.presentedViewController, completed);
     }
 }
 
-#pragma mark - UIKeyboard Notifications
-
-- (void)willShowKeyboardNotification:(NSNotification *)notification {
-    CGRect screenRect = [[notification userInfo][UIKeyboardFrameEndUserInfoKey] CGRectValue];
-
-    screenRect.size.height = [UIScreen mainScreen].bounds.size.height - screenRect.size.height;
-    screenRect.size.width = [UIScreen mainScreen].bounds.size.width;
-    screenRect.origin.y = 0;
-
-    self.screenFrameWhenKeyboardVisible = [NSValue valueWithCGRect:screenRect];
-    self.keyboardVisible = YES;
-
-    [UIView animateWithDuration:MZFormSheetPresentationControllerDefaultAnimationDuration delay:0.0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
-        [self setupFormSheetViewControllerFrame];
+- (void)dismissalTransitionWillBegin {
+    if (self.dismissalTransitionWillBeginCompletionHandler) {
+        self.dismissalTransitionWillBeginCompletionHandler(self.presentedViewController);
+    }
+    [self.presentedViewController.transitionCoordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext>  _Nonnull context) {
+        [UIView animateWithDuration:[context transitionDuration] animations:^{
+            self.dimmingView.alpha = 0.0;
+        }];
     } completion:nil];
+    
+    [super dismissalTransitionWillBegin];
 }
 
-- (void)willHideKeyboardNotification:(NSNotification *)notification {
-    self.keyboardVisible = NO;
-    self.screenFrameWhenKeyboardVisible = nil;
-
-    [UIView animateWithDuration:MZFormSheetPresentationControllerDefaultAnimationDuration delay:0.0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
-        [self setupFormSheetViewControllerFrame];
-    } completion:nil];
+- (void)dismissalTransitionDidEnd:(BOOL)completed {
+    
+    if (completed) {
+        [self.dimmingView removeFromSuperview];
+    }
+    
+    if (self.dismissalTransitionDidEndCompletionHandler) {
+        self.dismissalTransitionDidEndCompletionHandler(self.presentingViewController, completed);
+    }
+    
+    [super dismissalTransitionDidEnd:completed];
 }
 
-- (void)addKeyboardNotifications {
-    [self removeKeyboardNotifications];
-
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(willShowKeyboardNotification:)
-                                                 name:UIKeyboardWillShowNotification
-                                               object:nil];
-
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(willHideKeyboardNotification:)
-                                                 name:UIKeyboardWillHideNotification
-                                               object:nil];
+- (CGRect)frameOfPresentedViewInContainerView {
+    return [self formSheetViewControllerFrame];
 }
 
-- (void)removeKeyboardNotifications {
-    [[NSNotificationCenter defaultCenter] removeObserver:self
-                                                    name:UIKeyboardWillShowNotification
-                                                  object:nil];
+- (BOOL)shouldPresentInFullscreen {
+    return YES;
+}
 
-    [[NSNotificationCenter defaultCenter] removeObserver:self
-                                                    name:UIKeyboardWillHideNotification
-                                                  object:nil];
+- (BOOL)shouldRemovePresentersView {
+    return NO;
 }
 
 #pragma mark - UIGestureRecognizer
 
 - (void)addBackgroundTapGestureRecognizer {
     [self removeBackgroundTapGestureRecognizer];
-
+    
     UITapGestureRecognizer *tapGesture = [[UITapGestureRecognizer alloc] initWithTarget:self
                                                                                  action:@selector(handleTapGestureRecognizer:)];
     tapGesture.delegate = self;
     self.backgroundTapGestureRecognizer = tapGesture;
-
-    [self.view addGestureRecognizer:tapGesture];
+    
+    [self.dimmingView addGestureRecognizer:tapGesture];
 }
 
 - (void)removeBackgroundTapGestureRecognizer {
-    [self.view removeGestureRecognizer:self.backgroundTapGestureRecognizer];
+    [self.dimmingView removeGestureRecognizer:self.backgroundTapGestureRecognizer];
     self.backgroundTapGestureRecognizer = nil;
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
     // recive touch only on background window
-    if (touch.view == self.view) {
+    if (touch.view == self.dimmingView) {
         return YES;
     }
     return NO;
@@ -496,79 +383,160 @@ static NSMutableDictionary *_instanceOfTransitionClasses = nil;
             self.didTapOnBackgroundViewCompletionHandler(location);
         }
         if (self.shouldDismissOnBackgroundViewTap) {
-            [self dismissViewControllerAnimated:YES completion:nil];
+            [self.presentingViewController dismissViewControllerAnimated:YES completion:nil];
         }
     }
 }
 
-#pragma mark - UIViewController (UIContainerViewControllerProtectedMethods)
+#pragma mark - UIKeyboard Notifications
 
-- (UIViewController *)childViewControllerForStatusBarStyle {
-    if ([self.contentViewController isKindOfClass:[UINavigationController class]]) {
-        UINavigationController *navigationController = (UINavigationController *)self.contentViewController;
-        return [navigationController.topViewController mz_childTargetViewControllerForStatusBarStyle];
-    }
-
-    return [self.contentViewController mz_childTargetViewControllerForStatusBarStyle];
+- (void)addKeyboardNotifications __TVOS_PROHIBITED {
+    [self removeKeyboardNotifications];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(willShowKeyboardNotification:)
+                                                 name:UIKeyboardWillShowNotification
+                                               object:nil];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(willHideKeyboardNotification:)
+                                                 name:UIKeyboardWillHideNotification
+                                               object:nil];
 }
 
-- (UIViewController *)childViewControllerForStatusBarHidden {
-    if ([self.contentViewController isKindOfClass:[UINavigationController class]]) {
-        UINavigationController *navigationController = (UINavigationController *)self.contentViewController;
-        return [navigationController.topViewController mz_childTargetViewControllerForStatusBarStyle];
+- (void)removeKeyboardNotifications __TVOS_PROHIBITED {
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                    name:UIKeyboardWillShowNotification
+                                                  object:nil];
+    
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                    name:UIKeyboardWillHideNotification
+                                                  object:nil];
+}
+
+- (void)willShowKeyboardNotification:(NSNotification *)notification __TVOS_PROHIBITED {
+    CGRect screenRect = [[notification userInfo][UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    
+    screenRect.size.height = [UIScreen mainScreen].bounds.size.height - screenRect.size.height;
+    screenRect.size.width = [UIScreen mainScreen].bounds.size.width;
+    screenRect.origin.y = 0;
+    
+    self.screenFrameWhenKeyboardVisible = [NSValue valueWithCGRect:screenRect];
+    self.keyboardVisible = YES;
+    
+    UIViewAnimationCurve curve = [[notification.userInfo objectForKey:UIKeyboardAnimationCurveUserInfoKey] integerValue];
+    double duration = [[notification.userInfo objectForKey:UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    
+    [UIView animateWithDuration:duration
+                          delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{
+                         [UIView setAnimationCurve:curve];
+                         [self setupFormSheetViewControllerFrame];
+                     } completion:nil];
+}
+
+- (void)willHideKeyboardNotification:(NSNotification *)notification __TVOS_PROHIBITED {
+    self.keyboardVisible = NO;
+    self.screenFrameWhenKeyboardVisible = nil;
+    
+    UIViewAnimationCurve curve = [[notification.userInfo objectForKey:UIKeyboardAnimationCurveUserInfoKey] integerValue];
+    double duration = [[notification.userInfo objectForKey:UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    
+    [UIView animateWithDuration:duration
+                          delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{
+                         [UIView setAnimationCurve:curve];
+                         [self setupFormSheetViewControllerFrame];
+                     } completion:nil];
+}
+
+#pragma mark - Frame Configuration
+
+- (CGRect)formSheetViewControllerFrame {
+    MZFormSheetPresentationViewController *presentationViewController = (MZFormSheetPresentationViewController *)self.presentedViewController;
+    
+    CGRect formSheetRect = self.presentedView.frame;
+    CGSize contentViewSize = self.internalContentViewSize;
+    UIView *contentView = presentationViewController.contentViewController.view;
+    
+    if (CGSizeEqualToSize(contentViewSize, UILayoutFittingCompressedSize)) {
+        formSheetRect.size = [contentView systemLayoutSizeFittingSize: contentViewSize];
+    } else if (CGSizeEqualToSize(contentViewSize, UILayoutFittingExpandedSize)) {
+        formSheetRect.size = [contentView systemLayoutSizeFittingSize: self.containerView.bounds.size];
+    } else {
+        formSheetRect.size = contentViewSize;
     }
-    return [self.contentViewController mz_childTargetViewControllerForStatusBarStyle];
+    
+    if (self.shouldCenterHorizontally) {
+        formSheetRect.origin.x = CGRectGetMidX(self.containerView.bounds) - formSheetRect.size.width/2;
+    }
+    
+    if (self.keyboardVisible && self.movementActionWhenKeyboardAppears != MZFormSheetActionWhenKeyboardAppearsDoNothing) {
+        CGRect screenRect = [self.screenFrameWhenKeyboardVisible CGRectValue];
+        
+        if (screenRect.size.height > CGRectGetHeight(formSheetRect)) {
+            switch (self.movementActionWhenKeyboardAppears) {
+                case MZFormSheetActionWhenKeyboardAppearsCenterVertically:
+                    formSheetRect.origin.y = ([self yCoordinateBelowStatusBar] + screenRect.size.height - formSheetRect.size.height) / 2 - screenRect.origin.y;
+                    break;
+                case MZFormSheetActionWhenKeyboardAppearsMoveToTop:
+                    formSheetRect.origin.y = [self yCoordinateBelowStatusBar];
+                    break;
+                case MZFormSheetActionWhenKeyboardAppearsMoveToTopInset:
+                    formSheetRect.origin.y = [self topInset];
+                    break;
+                case MZFormSheetActionWhenKeyboardAppearsAlwaysAboveKeyboard:
+                case MZFormSheetActionWhenKeyboardAppearsAboveKeyboard:
+                    formSheetRect.origin.y = formSheetRect.origin.y + (screenRect.size.height - CGRectGetMaxY(formSheetRect)) - MZFormSheetPresentationControllerDefaultAboveKeyboardMargin;
+                default:
+                    break;
+            }
+        } else {
+            if (self.movementActionWhenKeyboardAppears == MZFormSheetActionWhenKeyboardAppearsAlwaysAboveKeyboard) {
+                formSheetRect.origin.y = formSheetRect.origin.y + (screenRect.size.height - CGRectGetMaxY(formSheetRect)) - MZFormSheetPresentationControllerDefaultAboveKeyboardMargin;
+            } else {
+                formSheetRect.origin.y = [self yCoordinateBelowStatusBar];
+            }
+            
+        }
+        
+    } else if (self.shouldCenterVertically) {
+        formSheetRect.origin.y = CGRectGetMidY(self.containerView.bounds) - formSheetRect.size.height/2;
+    } else {
+        formSheetRect.origin.y = self.topInset;
+    }
+    
+    CGRect modifiedPresentedViewFrame = CGRectZero;
+    
+    if (self.frameConfigurationHandler) {
+        modifiedPresentedViewFrame = self.frameConfigurationHandler(self.presentedView,formSheetRect,self.isKeyboardVisible);
+    } else {
+        modifiedPresentedViewFrame = formSheetRect;
+    }
+    
+    if ([self isPresentedViewControllerUsingModifiedContentFrame]) {
+        modifiedPresentedViewFrame = [self modifiedContentViewFrameForFrame:modifiedPresentedViewFrame];
+    }
+    
+    return modifiedPresentedViewFrame;
+}
+
+- (void)setupFormSheetViewControllerFrame {
+    self.presentedView.frame = [self formSheetViewControllerFrame];
 }
 
 #pragma mark - Rotation
 
 - (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
+    [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
+        self.dimmingView.frame = self.containerView.bounds;
+        [self setupFormSheetViewControllerFrame];
+        
+    } completion:nil];
+    
     [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
-
-    [self setupFormSheetViewControllerFrame];
-
-    [self.contentViewController viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
-}
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 90000
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations
-#else
-- (NSUInteger)supportedInterfaceOrientations
-#endif
-{
-    return [self.contentViewController supportedInterfaceOrientations];
 }
 
-- (BOOL)shouldAutorotate {
-    return [self.contentViewController shouldAutorotate];
-}
-
-#pragma mark - <UIViewControllerTransitioningDelegate>
-
-- (id<UIViewControllerAnimatedTransitioning>)animationControllerForPresentedController:(UIViewController *)presented presentingController:(UIViewController *)presenting sourceController:(UIViewController *)source {
-    self.animator = [[MZFormSheetPresentationControllerAnimator alloc] init];
-    self.animator.presenting = YES;
-    return self.animator;
-}
-
-- (id<UIViewControllerAnimatedTransitioning>)animationControllerForDismissedController:(UIViewController *)dismissed {
-    self.animator.presenting = NO;
-    return self.animator;
-}
-
-@end
-
-@implementation UIViewController (MZFormSheetPresentationController)
-- (nullable MZFormSheetPresentationController *)mz_formSheetPresentingPresentationController {
-    if ([self.presentingViewController.presentedViewController isKindOfClass:[MZFormSheetPresentationController class]]) {
-        return (MZFormSheetPresentationController *)self.presentingViewController.presentedViewController;
-    }
-    return nil;
-}
-
-- (nullable MZFormSheetPresentationController *)mz_formSheetPresentedPresentationController {
-    if ([self.presentedViewController isKindOfClass:[MZFormSheetPresentationController class]]) {
-        return (MZFormSheetPresentationController *)self.presentedViewController;
-    }
-    return nil;
-}
 @end

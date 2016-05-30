@@ -1,17 +1,17 @@
 //
 //  CustomTransition.m
-//  MZFormSheetPresentationController Objective-C Example
+//  MZFormSheetPresentationViewController Objective-C Example
 //
 //  Created by Michal Zaborowski on 18.06.2015.
 //  Copyright (c) 2015 Michal Zaborowski. All rights reserved.
 //
 
 #import "CustomTransition.h"
-#import "MZFormSheetPresentationController.h"
+#import "MZFormSheetPresentationViewController.h"
 
 @implementation CustomTransition
 
-- (void)entryFormSheetControllerTransition:(nonnull MZFormSheetPresentationController *)formSheetController
+- (void)entryFormSheetControllerTransition:(nonnull UIViewController *)formSheetController
                          completionHandler:(nonnull MZTransitionCompletionHandler)completionHandler {
     
     CAKeyframeAnimation *bounceAnimation = [CAKeyframeAnimation animationWithKeyPath:@"transform"];
@@ -30,20 +30,20 @@
                                         [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut]];
     bounceAnimation.delegate = self;
     [bounceAnimation setValue:completionHandler forKey:@"completionHandler"];
-    [formSheetController.contentViewController.view.layer addAnimation:bounceAnimation forKey:@"bounce"];
+    [formSheetController.view.layer addAnimation:bounceAnimation forKey:@"bounce"];
     
 }
 
-- (void)exitFormSheetControllerTransition:(nonnull MZFormSheetPresentationController *)formSheetController
+- (void)exitFormSheetControllerTransition:(nonnull UIViewController *)formSheetController
                         completionHandler:(nonnull MZTransitionCompletionHandler)completionHandler {
-    CGRect formSheetRect = formSheetController.contentViewController.view.frame;
-    formSheetRect.origin.x = formSheetController.view.bounds.size.width;
+    CGRect formSheetRect = formSheetController.view.frame;
+    formSheetRect.origin.x = [UIScreen mainScreen].bounds.size.width;
     
     [UIView animateWithDuration:0.3
                           delay:0
                         options:UIViewAnimationOptionCurveEaseIn
                      animations:^{
-                         formSheetController.contentViewController.view.frame = formSheetRect;
+                         formSheetController.view.frame = formSheetRect;
                      }
                      completion:^(BOOL finished) {
                          completionHandler();

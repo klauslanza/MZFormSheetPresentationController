@@ -1,6 +1,6 @@
 //
-//  MZFormSheetPresentationController.h
-//  MZFormSheetPresentationController
+//  MZFormSheetPresentationViewController.h
+//  MZFormSheetPresentationViewController
 //
 //  Created by Michał Zaborowski on 24.02.2015.
 //  Copyright (c) 2015 Michał Zaborowski. All rights reserved.
@@ -24,40 +24,38 @@
 //  THE SOFTWARE.
 
 #import <UIKit/UIKit.h>
-#import "MZTransition.h"
 #import <MZAppearance/MZAppearance.h>
+#import "MZTransition.h"
 
-extern CGFloat const MZFormSheetPresentationControllerDefaultAnimationDuration;
+typedef void(^MZFormSheetPresentationControllerTransitionBeginCompletionHandler)(UIViewController * __nonnull presentingViewController);
+typedef void(^MZFormSheetPresentationControllerTransitionEndCompletionHandler)(UIViewController * __nonnull presentingViewController, BOOL completed);
+typedef void(^MZFormSheetPresentationControllerTapHandler)(CGPoint location);
+typedef CGRect(^MZFormSheetPresentationFrameConfigurationHandler)(UIView * __nonnull presentedView, CGRect currentFrame, BOOL isKeyboardVisible);
 
 typedef NS_ENUM(NSInteger, MZFormSheetActionWhenKeyboardAppears) {
     MZFormSheetActionWhenKeyboardAppearsDoNothing = 0,
     MZFormSheetActionWhenKeyboardAppearsCenterVertically,
     MZFormSheetActionWhenKeyboardAppearsMoveToTop,
     MZFormSheetActionWhenKeyboardAppearsMoveToTopInset,
-    MZFormSheetActionWhenKeyboardAppearsAboveKeyboard
+    /**
+     *  If contentViewSize is less than screenSize when keyboard appeard
+     *  then formSheet will move to the top inset
+     */
+    MZFormSheetActionWhenKeyboardAppearsAboveKeyboard,
+    
+    /**
+     *  This will force that formSheet will always move above keyboard
+     *  even if contentViewSize is larger than screenSize
+     */
+    MZFormSheetActionWhenKeyboardAppearsAlwaysAboveKeyboard
 };
 
-typedef void(^MZFormSheetPresentationControllerCompletionHandler)(UIViewController * __nonnull contentViewController);
-typedef void(^MZFormSheetPresentationControllerTapHandler)(CGPoint location);
-typedef void(^MZFormSheetPresentationControllerTransitionHandler)();
-
-@interface MZFormSheetPresentationController : UIViewController <MZAppearance, UIViewControllerTransitioningDelegate>
+@interface MZFormSheetPresentationController : UIPresentationController <MZAppearance>
+@property (nonatomic, strong, readonly, null_resettable) UIView *dimmingView;
 
 /**
- *  Register custom transition animation style.
- *  You need to setup transitionStyle to MZFormSheetTransitionStyleCustom.
- *
- *  @param transitionClass Custom transition class.
- *  @param transitionStyle The transition style to use when presenting the receiver.
+ *  The preferred size for the container’s content. (required)
  */
-+ (void)registerTransitionClass:(Class __nonnull)transitionClass forTransitionStyle:(MZFormSheetPresentationTransitionStyle)transitionStyle;
-
-+ (nullable Class)classForTransitionStyle:(MZFormSheetPresentationTransitionStyle)transitionStyle;
-/**
- *  The view controller responsible for the content portion of the popup.
- */
-@property (nonatomic, readonly, strong, nullable) UIViewController *contentViewController;
-
 @property (nonatomic, assign) CGSize contentViewSize MZ_APPEARANCE_SELECTOR;
 
 /**
@@ -73,12 +71,6 @@ typedef void(^MZFormSheetPresentationControllerTransitionHandler)();
 @property (nonatomic, assign) CGFloat portraitTopInset MZ_APPEARANCE_SELECTOR;
 
 /**
- Corner radius of content view
- By default, this is 5.0
- */
-@property (nonatomic, assign) CGFloat contentViewCornerRadius MZ_APPEARANCE_SELECTOR;
-
-/**
  Returns whether the form sheet controller should dismiss after background view tap.
  By default, this is NO
  */
@@ -91,55 +83,21 @@ typedef void(^MZFormSheetPresentationControllerTransitionHandler)();
 @property (nonatomic, assign) BOOL shouldUseMotionEffect MZ_APPEARANCE_SELECTOR;
 
 /**
+ Center form sheet horizontally.
+ By default, this is YES
+ */
+@property (nonatomic, assign) BOOL shouldCenterHorizontally MZ_APPEARANCE_SELECTOR;
+
+/**
  Center form sheet vertically.
  By default, this is NO
  */
 @property (nonatomic, assign) BOOL shouldCenterVertically MZ_APPEARANCE_SELECTOR;
 
 /**
- Returns whether the background view be touch transparent.
- If transparent is set to YES, background view will not recive touch and didTapOnBackgroundViewCompletionHandler will not be called.
- Also will not be possible to dismiss form sheet on background tap.
- By default, this is NO.
+ *  Returns whether the keyboard is visible
  */
-@property (nonatomic, assign, getter = isTransparentTouchEnabled) BOOL transparentTouchEnabled MZ_APPEARANCE_SELECTOR;
-
-/**
- The transition style to use when presenting the receiver.
- By default, this is MZFormSheetPresentationTransitionStyleSlideFromTop.
- */
-@property (nonatomic, assign) MZFormSheetPresentationTransitionStyle contentViewControllerTransitionStyle MZ_APPEARANCE_SELECTOR;
-
-/**
- The movement action to use when the keyboard appears.
- By default, this is MZFormSheetActionWhenKeyboardAppears.
- */
-@property (nonatomic, assign) MZFormSheetActionWhenKeyboardAppears movementActionWhenKeyboardAppears MZ_APPEARANCE_SELECTOR;
-
-/**
- The handler to call when user tap on background view.
- */
-@property (nonatomic, copy, nullable) MZFormSheetPresentationControllerTapHandler didTapOnBackgroundViewCompletionHandler;
-
-/**
- The handler to call when presented form sheet is before entry transition and its view will show on window.
- */
-@property (nonatomic, copy, nullable) MZFormSheetPresentationControllerCompletionHandler willPresentContentViewControllerHandler;
-
-/**
- The handler to call when presented form sheet is after entry transition animation.
- */
-@property (nonatomic, copy, nullable) MZFormSheetPresentationControllerCompletionHandler didPresentContentViewControllerHandler;
-
-/**
- The handler to call when presented form sheet will be dismiss, this is called before out transition animation.
- */
-@property (nonatomic, copy, nullable) MZFormSheetPresentationControllerCompletionHandler willDismissContentViewControllerHandler;
-
-/**
- The handler to call when presented form sheet is after dismiss.
- */
-@property (nonatomic, copy, nullable) MZFormSheetPresentationControllerCompletionHandler didDismissContentViewControllerHandler;
+@property (nonatomic, assign, readonly, getter=isKeyboardVisible) BOOL keyboardVisible;
 
 /**
  The background color of the background view.
@@ -160,14 +118,55 @@ typedef void(^MZFormSheetPresentationControllerTransitionHandler)();
 @property (nonatomic, assign) BOOL shouldApplyBackgroundBlurEffect MZ_APPEARANCE_SELECTOR;
 
 /**
- Returns an initialized popup controller object.
- @param viewController This parameter must not be nil.
+ The movement action to use when the keyboard appears.
+ By default, this is MZFormSheetActionWhenKeyboardAppearsDoNothing.
  */
-- (nonnull instancetype)initWithContentViewController:(UIViewController * __nonnull )viewController;
+@property (nonatomic, assign) MZFormSheetActionWhenKeyboardAppears movementActionWhenKeyboardAppears MZ_APPEARANCE_SELECTOR;
 
-@end
 
-@interface UIViewController (MZFormSheetPresentationController)
-- (nullable MZFormSheetPresentationController *)mz_formSheetPresentingPresentationController;
-- (nullable MZFormSheetPresentationController *)mz_formSheetPresentedPresentationController;
+/**
+ Returns whether the background view be touch transparent.
+ If transparent is set to YES, background view will not recive touch and didTapOnBackgroundViewCompletionHandler will not be called.
+ Also will not be possible to dismiss form sheet on background tap.
+ By default, this is NO.
+ */
+@property (nonatomic, assign, getter = isTransparentTouchEnabled) BOOL transparentTouchEnabled MZ_APPEARANCE_SELECTOR;
+
+
+/**
+ The handler to call when user tap on background view.
+ */
+@property (nonatomic, copy, nullable) MZFormSheetPresentationControllerTapHandler didTapOnBackgroundViewCompletionHandler;
+
+/**
+ *  Notifies the presentation controller that the presentation animations are about to start.
+ */
+@property (nonatomic, copy, nullable) MZFormSheetPresentationControllerTransitionBeginCompletionHandler presentationTransitionWillBeginCompletionHandler;
+
+/**
+ *  Notifies the presentation controller that the presentation animations finished.
+ */
+@property (nonatomic, copy, nullable) MZFormSheetPresentationControllerTransitionEndCompletionHandler presentationTransitionDidEndCompletionHandler;
+
+/**
+ *  Notifies the presentation controller that the dismissal animations are about to start.
+ */
+@property (nonatomic, copy, nullable) MZFormSheetPresentationControllerTransitionBeginCompletionHandler dismissalTransitionWillBeginCompletionHandler;
+
+/**
+ *  Notifies the presentation controller that the dismissal animations finished.
+ */
+@property (nonatomic, copy, nullable) MZFormSheetPresentationControllerTransitionEndCompletionHandler dismissalTransitionDidEndCompletionHandler;
+
+/**
+ *  This completion handler allow you to change frame during rotation and animations
+ *  for presentedView
+ */
+@property (nonatomic, copy, nullable) MZFormSheetPresentationFrameConfigurationHandler frameConfigurationHandler;
+
+/**
+ *  This method recalculate presenting view frame
+ */
+- (void)layoutPresentingViewController;
+
 @end

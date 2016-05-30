@@ -31,14 +31,16 @@ extern NSString *const __nonnull MZTransitionExceptionMethodNotImplemented;
 
 typedef void (^MZTransitionCompletionHandler)();
 
-@class MZFormSheetPresentationController;
+@class MZFormSheetPresentationViewController;
 
 typedef NS_ENUM(NSInteger, MZFormSheetPresentationTransitionStyle) {
   MZFormSheetPresentationTransitionStyleSlideFromTop = 0,
   MZFormSheetPresentationTransitionStyleSlideFromBottom,
   MZFormSheetPresentationTransitionStyleSlideFromLeft,
   MZFormSheetPresentationTransitionStyleSlideFromRight,
-  MZFormSheetPresentationTransitionStylelideAndBounceFromLeft,
+  MZFormSheetPresentationTransitionStyleSlideAndBounceFromTop,
+  MZFormSheetPresentationTransitionStyleSlideAndBounceFromBottom,
+  MZFormSheetPresentationTransitionStyleSlideAndBounceFromLeft,
   MZFormSheetPresentationTransitionStyleSlideAndBounceFromRight,
   MZFormSheetPresentationTransitionStyleFade,
   MZFormSheetPresentationTransitionStyleBounce,
@@ -47,22 +49,35 @@ typedef NS_ENUM(NSInteger, MZFormSheetPresentationTransitionStyle) {
   MZFormSheetPresentationTransitionStyleNone,
 };
 
-@protocol MZFormSheetPresentationControllerTransitionProtocol <NSObject>
+@protocol MZFormSheetPresentationViewControllerTransitionProtocol <NSObject>
 @required
 /**
  Subclasses must implement to add custom transition animation.
  When animation is finished you must call super method or completionHandler to
  keep view life cycle.
  */
-- (void)entryFormSheetControllerTransition:(nonnull MZFormSheetPresentationController *)formSheetController
+- (void)entryFormSheetControllerTransition:(nonnull UIViewController *)formSheetController
                          completionHandler:(nonnull MZTransitionCompletionHandler)completionHandler;
 
-- (void)exitFormSheetControllerTransition:(nonnull MZFormSheetPresentationController *)formSheetController
+- (void)exitFormSheetControllerTransition:(nonnull UIViewController *)formSheetController
                         completionHandler:(nonnull MZTransitionCompletionHandler)completionHandler;
 
 @end
 
 @interface MZTransition
-    : NSObject <MZFormSheetPresentationControllerTransitionProtocol>
+    : NSObject <MZFormSheetPresentationViewControllerTransitionProtocol>
+
+/**
+ *  Register custom transition animation style.
+ *  You need to setup transitionStyle to MZFormSheetTransitionStyleCustom.
+ *
+ *  @param transitionClass Custom transition class.
+ *  @param transitionStyle The transition style to use when presenting the receiver.
+ */
++ (void)registerTransitionClass:(Class __nonnull)transitionClass forTransitionStyle:(MZFormSheetPresentationTransitionStyle)transitionStyle;
+
++ (nullable Class)classForTransitionStyle:(MZFormSheetPresentationTransitionStyle)transitionStyle;
+
++ (NSDictionary * _Nonnull)sharedTransitionClasses;
 
 @end
